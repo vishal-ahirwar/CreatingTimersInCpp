@@ -1,83 +1,102 @@
-// Auto Genrated C++ file by aura CLI
-// None
 #include <iostream>
-#include <timerconfig.h>
-#include <thread>
-#include <chrono>
+#include <queue>
 #include <functional>
-#include <string>
-#include <vector>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
 
-class App
+class TimerManager
 {
-  static std::vector<std::string> _args;
-
 public:
-  static int exec(int argc, char **argv)
-  {
-    for (int i = 0; i < argc; ++i)
-      _args.push_back(argv[i]);
-    while (true)
-    {
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-    };
-    return 0;
-  };
-};
-std::vector<std::string> App::_args = {};
-class Timer
-{
-  int _remaining_time{};
-  std::function<void()> _callback;
-  bool _bloop{};
+  TimerManager() : _worker(&TimerManager::processTimers, this), _running(true) {}
 
-public:
-  Timer() {};
-  void setCallback(std::function<void()> callback)
+  ~TimerManager()
   {
-    _callback = callback;
+    stop();
   }
-  void start(const int &t, bool b_loop)
+
+  void setTimer(int delayMs, std::function<void()> callback)
   {
-    _bloop = b_loop;
-    if (!_callback)
+    auto timePoint = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
+
     {
-      std::cerr << "Error : callback is not set!\n";
-      return;
+      std::lock_guard<std::mutex> lock(_mutex);
+      _timers.emplace(timePoint, callback);
     }
-    _remaining_time = t;
-    std::thread(&Timer::run, this).detach();
+    _cv.notify_one();
+  }
+
+  void stop()
+  {
+    {
+      std::lock_guard<std::mutex> lock(_mutex);
+      _running = false;
+    }
+    _cv.notify_one();
+    if (_worker.joinable())
+      _worker.join();
   }
 
 private:
-  void run()
+  using Timer = std::pair<std::chrono::steady_clock::time_point, std::function<void()>>;
+  struct Compare
   {
-    int current_time = _remaining_time;
-    do
+    bool operator()(const Timer &a, const Timer &b)
     {
+      return a.first > b.first;
+    }
+  };
 
-      while (current_time--)
+  std::priority_queue<Timer, std::vector<Timer>, Compare> _timers;
+  std::thread _worker;
+  std::mutex _mutex;
+  std::condition_variable _cv;
+  bool _running;
+
+  void processTimers()
+  {
+    std::unique_lock<std::mutex> lock(_mutex);
+    while (_running)
+    {
+      if (_timers.empty())
       {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-      };
-      _callback();
-      current_time = _remaining_time;
-    } while (_bloop);
+        _cv.wait(lock);
+      }
+      else
+      {
+        auto now = std::chrono::steady_clock::now();
+        auto nextTimer = _timers.top();
+
+        if (nextTimer.first <= now)
+        {
+          _timers.pop();
+          lock.unlock();
+          nextTimer.second(); // Execute callback
+          lock.lock();
+        }
+        else
+        {
+          _cv.wait_until(lock, nextTimer.first);
+        }
+      }
+    }
   }
 };
 
-int main(int argc, char *argv[])
+int main()
 {
-  Timer timer1, timer2, timer3;
-  timer1.setCallback([]()
-                     { std::cout << "timer1\n"; });
-  timer1.start(5, false);
-  timer2.setCallback([]()
-                     { std::cout << "timer2\n"; });
-  timer2.start(1, false);
-  timer3.setCallback([]()
-                     { std::cout << "timer3\n"; });
-  timer3.start(3, false);
+  TimerManager manager;
 
-  return App::exec(argc, argv);
+  std::cout << "Starting timers...\n";
+  manager.setTimer(2000, []()
+                   { std::cout << "Timer 1: 2 seconds elapsed!\n"; });
+  manager.setTimer(1000, []()
+                   { std::cout << "Timer 2: 1 second elapsed!\n"; });
+  manager.setTimer(3000, []()
+                   { std::cout << "Timer 3: 3 seconds elapsed!\n"; });
+
+  std::this_thread::sleep_for(std::chrono::seconds(4));
+  std::cout << "Main function finished.\n";
+  return 0;
 }
