@@ -1,0 +1,6 @@
+namespace Project{
+constexpr const char*const VERSION_STRING="@timer_VERSION_MAJOR@.@timer_VERSION_MINOR@.@timer_VERSION_PATCH@";
+constexpr const char*const COMPANY_NAME ="@COMPANY@";
+constexpr const char*const COPYRIGHT_STRING= "@COPYRIGHT@";
+constexpr const char*const PROJECT_NAME="@PROJECT_NAME@";
+}
